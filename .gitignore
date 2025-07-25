@@ -1,0 +1,4 @@
+target
+programs/oridion/src/migration.rs
+Anchor.toml
+verfiy.sh
