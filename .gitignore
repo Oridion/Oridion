@@ -1,4 +1,32 @@
-target
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Logs & temp
+*.log
+*.tmp
+
+# AWS/Lambda secrets (if not already excluded via env vars)
+.env
+.env.*
+
+# Anchor artifacts (unless needed)
+.anchor/
+target/idl/
+target/verifiable/
+
+# Cargo-related
+Cargo.lock  # ❌ Only exclude this for *library crates*. Otherwise, commit it.
+
 programs/oridion/src/migration.rs
 Anchor.toml
 verfiy.sh
