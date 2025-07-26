@@ -30,3 +30,4 @@ Cargo.lock  # ❌ Only exclude this for *library crates*. Otherwise, commit it.
 programs/oridion/src/migration.rs
 Anchor.toml
 verfiy.sh
+Dockerfile.verify
