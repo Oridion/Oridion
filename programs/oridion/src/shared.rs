@@ -54,6 +54,33 @@ pub fn get_random_percent() -> u8 {
 }
 
 
+/// Checks if a planet is unlocked or the lock has timed out
+/// Used for Planet hops and Start hops
+/// End hops check to validate is locked below.
+pub fn validate_planet_is_usable (
+    from: &Planet,
+    pod_key: Pubkey
+) -> Result<()> {
+    // The withdrawing planet must be unlocked to proceed.
+    let is_unlocked = from.locked_at == 0;
+    let locked_by_pod = from.locked_by == pod_key;
+
+    if is_unlocked || locked_by_pod {
+        return Ok(());
+    }
+    
+    //If locked by another planet, then the lock must be expired to use it. 
+    if from.locked_at > 0 {
+        let clock = Clock::get()?;
+        let now = clock.unix_timestamp;
+        let lock_age = now - from.locked_at;
+        require!(lock_age >= LOCK_EXPIRE_SECONDS, OridionError::PlanetStillLocked);
+    }
+    Ok(())
+}
+
+
+
 /// Validates that the withdrawing planet account is locked before any usage.
 pub fn validate_planet_locked_by_pod(
     from: &Planet,

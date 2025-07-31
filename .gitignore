@@ -31,3 +31,4 @@ programs/oridion/src/migration.rs
 Anchor.toml
 verfiy.sh
 Dockerfile.verify
+solana-install.sh

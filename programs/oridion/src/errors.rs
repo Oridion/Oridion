@@ -4,6 +4,10 @@ use anchor_lang::prelude::*;
 pub enum OridionError {
     #[msg("InvalidTreasure")]
     InvalidTreasure,
+    #[msg("Invalid passcode")]
+    InvalidPasscode,
+    #[msg("Too soon to emergency land")]
+    TooSoonToEmLand,
     #[msg("Unauthorized mode")]
     UnauthorizedMode,
     #[msg("Universe is locked")]

@@ -5,9 +5,10 @@ mod account_universe;
 pub mod account_pod;
 mod account_planet;
 mod account_treasury;
+mod account_star;
 mod shared;
 mod errors;
-
+mod all_accounts;
 
 use account_pod::*;
 use account_planet::*;
@@ -15,11 +16,13 @@ use account_universe::*;
 use account_treasury::*;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program;
+use all_accounts::*;
 use errors::*;
 use shared::*;
-use solana_security_txt::security_txt;
 use variables::*;
+use solana_security_txt::security_txt;
 use solana_program::system_instruction::transfer;
+use solana_program::hash::hash;
 
 
 declare_id!("ord1qJZ3DB52s9NoG8nuoacW85aCyNvECa5kAqcBVBu");
@@ -40,6 +43,7 @@ pub mod oridion {
     use solana_program::instruction::Instruction;
     use solana_program::program::{invoke, invoke_signed};
     use solana_program::system_instruction;
+    use crate::account_star::{Star, StarMeta};
     use super::*;
 
     /// UNIVERSE
@@ -156,6 +160,7 @@ pub mod oridion {
         pub mode: u8,
         pub delay: u32,
         pub show_memo: u8,
+        pub passcode: String
     }
 
 
@@ -177,13 +182,20 @@ pub mod oridion {
         //1 Delay, 2 Instant, 3 Manual
         require!(args.mode <= 3, OridionError::InvalidMode);
 
-        // //Only manager can create orbits (Manual)
-        // if args.mode == 3 {
-        //     require!(
-        //         ctx.accounts.creator.key() == MANAGER_PUBKEY,
-        //         OridionError::UnauthorizedMode
-        //     );
-        // }
+
+        // Check: length must be exactly 6 characters
+        require!(
+            args.passcode.len() == 6,
+            OridionError::InvalidPasscode
+        );
+
+        // Check: must only contain uppercase A–Z or 0–9
+        require!(
+            args.passcode
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
+            OridionError::InvalidPasscode
+        );
 
         let clock: Clock = Clock::get()?;
         let now = clock.unix_timestamp;
@@ -259,6 +271,13 @@ pub mod oridion {
 
 
         // -------------------------------------------------//
+        // CONVERT PASSCODE TO SHA256
+        let hash = hash(args.passcode.as_bytes());
+        // -------------------------------------------------//
+
+
+        // -------------------------------------------------//
+        // OPTIONAL SPL MEMO
         // If the user has opted in to transparency, add an SPL memo to help wallets
         // and explorers identify the transaction. This is optional and user-controlled.
         let creator_account: &Signer = &ctx.accounts.creator;
@@ -339,6 +358,7 @@ pub mod oridion {
         pod.last_process = 0; //0 = launch pod
         pod.delay = args.delay;
         pod.land_at = land_at;
+        pod.passcode_hash = hash.to_bytes(); // pass code hash: [u8; 32]
         pod.is_in_transit = 0;
         pod.destination = *ctx.accounts.destination.key; //Destination must be set.
         pod.location = ctx.accounts.planet.key();
@@ -368,8 +388,10 @@ pub mod oridion {
         planet.add_lamports(args.deposit_lamports)?;
         ctx.accounts.universe.sub_lamports(args.deposit_lamports)?;
 
-        //Initialize Activity log PDA
-        pod.init_log(&planet.name, now);
+        //Initialize Activity log PDA - if not instant
+        if pod.mode != 2 {
+            pod.init_log(&planet.name, now);
+        }
 
         msg!(
             "Pod launched successfully: type={}, from {}",
@@ -409,6 +431,37 @@ pub mod oridion {
     }
 
 
+    /// SCATTER LOCK - Same lock but for scatter hop (3 planets)
+    pub fn scatter_lock(ctx: Context<ScatterLockPlanets>) -> Result<()> {
+        let pod = &ctx.accounts.pod;
+        let now = Clock::get()?.unix_timestamp;
+
+        let planets = [
+            &mut ctx.accounts.planet_1,
+            &mut ctx.accounts.planet_2,
+            &mut ctx.accounts.planet_3,
+        ];
+
+        for planet in planets {
+            let is_locked = planet.locked_at != 0;
+            let lock_age = now - planet.locked_at;
+            let is_lock_expired = lock_age > LOCK_EXPIRE_SECONDS;
+
+            // If the planet is locked, it must be expired to proceed
+            if is_locked {
+                require!(is_lock_expired, OridionError::PlanetStillLocked);
+            }
+
+            // Set lock
+            planet.locked_by = pod.key();
+            planet.locked_at = now;
+        }
+        Ok(())
+    }
+
+
+
+
     /// HOP FROM PLANET TO PLANET
     pub fn planet_hop(ctx: Context<PlanetHop>) -> Result<()>{
 
@@ -416,8 +469,8 @@ pub mod oridion {
         let from: &mut Account<Planet> = &mut ctx.accounts.from_planet;
         let to: &mut Account<Planet> = &mut ctx.accounts.to_planet;
 
-        // Lock check
-        validate_planet_locked_by_pod(from,pod.key())?;
+        // Check planet is unlocked
+        validate_planet_is_usable(from,pod.key())?;
 
         // Validate `from` and `to` planets are different
         require!(
@@ -438,56 +491,25 @@ pub mod oridion {
         //Increment visits
         to.visits += 1;
 
-        //Log activity
-        pod.log_activity(ActivityAction::Hop as u8, &to.name)?;
+        //Log activity - (not instant)
+        if pod.mode != 2 {
+            pod.log_activity(ActivityAction::Hop as u8, &to.name)?;
+        }
 
         // TRANSACTION: Move funds from planet to planet
         to.add_lamports(pod.lamports)?;
         from.sub_lamports(pod.lamports)?;
 
-        // Release lock
-        release_planet_lock(from)?;
-
-        Ok(())
-    }
-
-    /// LAND FUNDS TO FINAL DESTINATION.
-    /// - Handles the transaction from the pod's current planet to set final destination user wallet.
-    /// - This is just like planet hop except deliver to destination wallet
-    /// Since we MUST pass the destination wallet address in the accounts section,
-    /// and it must match the set `pod.destination` already; there is no need for further destination checks here.
-    pub fn land(ctx: Context<LandAccount>) -> Result<()> {
-        let pod: &mut Account<Pod> = &mut ctx.accounts.pod;
-        let from: &mut Account<Planet> = &mut ctx.accounts.from_planet;
-        let delivery_lamports = pod.lamports;
-
-        // Lock check
-        validate_planet_locked_by_pod(from,pod.key())?;
-
-        // VALIDATION: Prevent a double-landing or underfunded source
-        require!(delivery_lamports > 0, OridionError::AlreadyLanded);
-        require!(from.get_lamports() >= delivery_lamports,OridionError::PlanetNotEnoughFundsError);
-
-        // TRANSFER funds from Planet → Destination
-        ctx.accounts.destination.add_lamports(delivery_lamports)?;
-        from.sub_lamports(delivery_lamports)?;
-
-        // DRAIN any residual lamports in the pod PDA to Manager
-        let pod_info = pod.to_account_info();
-        let remaining = pod_info.lamports();
-
-        // Prevent self-drain bug (if pod.lamports is 0, we shouldn't do this)
-        if remaining > 0 {
-            **ctx.accounts.manager.to_account_info().lamports.borrow_mut() += remaining;
-            **pod_info.lamports.borrow_mut() -= remaining;
-        }
-
+        //Release planet lock
         release_planet_lock(from)?;
         Ok(())
     }
+
+
 
 
     /// STAR HOP TWO - START (PLANET -> STAR1|START2)
+    /// The "from" planet must be locked before.
     pub fn star_hop_two_start(
         ctx: Context<StarHopTwoStart>,
         _star_one_id: String,
@@ -501,10 +523,10 @@ pub mod oridion {
         let star2: &mut Account<Star> = &mut ctx.accounts.star_two;
         let from: &mut Account<Planet> = &mut ctx.accounts.from_planet;
 
-        // Lock check
-        validate_planet_locked_by_pod(from,pod.key())?;
 
-        // IMPORTANT VALIDATION: STAR ONE AND TWO CANNOT BE THE SAME
+        // IMPORTANT VALIDATION:
+        // Planet must be usable. Stars cannot be the same. Pod cannot be in transit.
+        validate_planet_is_usable(from,pod.key())?;
         require!(pod.is_in_transit == 0, OridionError::InTransit);
         require!(star1.key() != star2.key(), OridionError::HopErrorStarsMustBeUnique);
 
@@ -576,9 +598,11 @@ pub mod oridion {
         //Increment planet visit
         to.visits += 1;
 
-        //Log activity
-        pod.log_activity(ActivityAction::Star2 as u8, &to.name)?;
-        
+        //Log activity - not instant
+        if pod.mode != 2 {
+            pod.log_activity(ActivityAction::Star2 as u8, &to.name)?;
+        }
+
         // TRANSACTIONS
         // Transaction from stars one and two to the destination planet
         let total_lamports: u64 = star_one_amount + star_two_amount;
@@ -611,28 +635,26 @@ pub mod oridion {
         _star_three_id: String
     ) -> Result<()>{
 
-        // Pod account
         let pod: &mut Account<Pod> = &mut ctx.accounts.pod;
         let from: &mut Account<Planet> = &mut ctx.accounts.from_planet;
-
-        // Lock check
-        validate_planet_locked_by_pod(from,pod.key())?;
-
-        // Make sure it is not already between stars
-        require!(pod.is_in_transit == 0, OridionError::InTransit);
-        pod.is_in_transit = 1;
-        pod.last_process_at = Clock::get()?.unix_timestamp;
-
         let manager: &Signer = &ctx.accounts.manager;
 
         let star1: &mut Account<Star> = &mut ctx.accounts.star_one;
         let star2: &mut Account<Star> = &mut ctx.accounts.star_two;
         let star3: &mut Account<Star> = &mut ctx.accounts.star_three;
 
-        // IMPORTANT VALIDATION: STAR ONE AND TWO CANNOT BE THE SAME
+        // IMPORTANT VALIDATION:
+        // Validate the planet is locked. Planet cannot be in transit. Stars cannot be the same
+        validate_planet_locked_by_pod(from,pod.key())?;
+        require!(pod.is_in_transit == 0, OridionError::InTransit);
         require!(star1.key() != star2.key(), OridionError::HopErrorStarsMustBeUnique);
         require!(star2.key() != star3.key(), OridionError::HopErrorStarsMustBeUnique);
         require!(star1.key() != star3.key(), OridionError::HopErrorStarsMustBeUnique);
+
+        // Set in transit
+        pod.is_in_transit = 1;
+        pod.last_process_at = Clock::get()?.unix_timestamp;
+
 
         let (first_split_percent, second_split_percent) = (get_random_percent(), get_random_percent());
         let side_one = (first_split_percent as u64 * pod.lamports) / 100;
@@ -781,8 +803,10 @@ pub mod oridion {
         //Increment planet visit
         to.visits += 1;
 
-        //Log activity
-        pod.log_activity(ActivityAction::Star3 as u8, &to.name)?;
+        //Log activity - not instant
+        if pod.mode != 2 {
+            pod.log_activity(ActivityAction::Star3 as u8, &to.name)?;
+        }
 
         // TRANSACTIONS
         // Transaction from stars one and two to the destination planet
@@ -808,8 +832,8 @@ pub mod oridion {
         let pod = &mut ctx.accounts.pod;
         let from = &mut ctx.accounts.from_planet;
 
-        //Validate planet lock
-        validate_planet_locked_by_pod(from,pod.key())?;
+        // Validate that the "from" planet is locked or pod owns the lock
+        validate_planet_locked_by_pod(from, pod.key())?;
 
         require!(pod.is_in_transit == 0, OridionError::InTransit);
 
@@ -817,15 +841,13 @@ pub mod oridion {
         require!(total > 0, OridionError::InvalidDepositAmount);
         require!(from.get_lamports() >= total, OridionError::PlanetNotEnoughFundsError);
 
-        // Simulate random distribution — can upgrade to on-chain randomness later
-        let mut splits = [0u64; 5];
+        // Generate pseudo-random split using block timestamp
         let now = Clock::get()?.unix_timestamp;
         let rng = solana_program::keccak::hashv(&[&now.to_le_bytes()]);
+        let mut splits = [0u64; 3];
         let mut remaining = total;
 
-        // Generate 4 random split amounts from 1–50% of the total
-        // The final planet gets the remaining amount to ensure full distribution
-        for i in 0..4 {
+        for i in 0..2 {
             let rand_seed = u64::from_le_bytes([
                 rng.0[i], rng.0[i + 1], rng.0[i + 2], rng.0[i + 3],
                 rng.0[i + 4], rng.0[i + 5], rng.0[i + 6], rng.0[i + 7],
@@ -835,45 +857,47 @@ pub mod oridion {
             splits[i] = amt.min(remaining);
             remaining -= splits[i];
         }
-        splits[4] = remaining;
 
-        require!(splits.iter().sum::<u64>() == total, OridionError::ScatterSplitMathError);
+        splits[2] = remaining;
+
+        require!(
+        splits.iter().sum::<u64>() == total,
+        OridionError::ScatterSplitMathError
+    );
 
         let planets = [
             &mut ctx.accounts.to_planet_1,
             &mut ctx.accounts.to_planet_2,
             &mut ctx.accounts.to_planet_3,
-            &mut ctx.accounts.to_planet_4,
-            &mut ctx.accounts.to_planet_5,
         ];
 
-        // SUBTRACT FROM FROM_PLANET
+        // Subtract from source
         from.sub_lamports(total)?;
 
-        // SPREAD TO DESTINATION PLANETS
-        for i in 0..5 {
+        // Distribute to destination planets
+        for i in 0..3 {
             planets[i].add_lamports(splits[i])?;
         }
 
-        // STORE META
+        // Store meta data
         let meta = &mut ctx.accounts.scatter_meta;
         meta.from = from.key();
         meta.to_pdas = [
             planets[0].key(),
             planets[1].key(),
-            planets[2].key(),
-            planets[3].key(),
-            planets[4].key(),
+            planets[2].key()
         ];
-        meta.amounts = splits;
+        meta.amounts = [
+            splits[0],
+            splits[1],
+            splits[2]
+        ];
         meta.created_at = now;
         meta.bump = ctx.bumps.scatter_meta;
 
-        //Set in between
         pod.is_in_transit = 1;
-        pod.last_process_at = Clock::get()?.unix_timestamp;
+        pod.last_process_at = now;
 
-        //Release lock
         release_planet_lock(from)?;
 
         Ok(())
@@ -884,23 +908,28 @@ pub mod oridion {
     pub fn scatter_end(ctx: Context<ScatterEnd>) -> Result<()> {
         let meta = &ctx.accounts.scatter_meta;
         let pod = &mut ctx.accounts.pod;
+        let to = &mut ctx.accounts.to_planet;
 
+        //Validate transmit meta is found and the pod is in transit.
         require!(meta.created_at > 0,OridionError::InvalidScatterMeta);
         require!(pod.is_in_transit == 1, OridionError::NotInTransit);
-        
+
+        //Gather all planets to transfer from
         let from_planets = [
             &mut ctx.accounts.from_planet_1,
             &mut ctx.accounts.from_planet_2,
             &mut ctx.accounts.from_planet_3,
-            &mut ctx.accounts.from_planet_4,
-            &mut ctx.accounts.from_planet_5,
         ];
 
-        let to = &mut ctx.accounts.to_planet;
+        //Validate all planets are usable.
+        for i in 0..3 {
+            validate_planet_is_usable(from_planets[i],pod.key())?;
+        }
+
 
         //Tally the total
         let mut total_collected: u64 = 0;
-        for i in 0..5 {
+        for i in 0..3 {
             let amt = meta.amounts[i];
             require!(
                 from_planets[i].get_lamports() >= amt,
@@ -909,6 +938,9 @@ pub mod oridion {
             total_collected = total_collected
                 .checked_add(amt)
                 .ok_or(OridionError::UnusualMathError)?;
+
+            //Release echo planet lock
+            release_planet_lock(from_planets[i])?;
         }
 
         // Check that total matches original pod deposit
@@ -917,16 +949,17 @@ pub mod oridion {
             OridionError::ScatterTotalToPodMismatch
         );
 
-
         // Update pod location
         pod.location = to.key();
         hop_pod(pod);
 
-        //Log activity
-        pod.log_activity(ActivityAction::Scatter as u8, &to.name)?;
+        //Log activity - not instant
+        if pod.mode != 2 {
+            pod.log_activity(ActivityAction::Scatter as u8, &to.name)?;
+        }
 
         // Perform transfers
-        for i in 0..5 {
+        for i in 0..3 {
             let amt = meta.amounts[i];
             from_planets[i].sub_lamports(amt)?;
             to.add_lamports(amt)?;
@@ -938,8 +971,129 @@ pub mod oridion {
     }
 
 
+    /// LAND FUNDS TO FINAL DESTINATION.
+    /// - Handles the transaction from the pod's current planet to set final destination user wallet.
+    /// - This is just like planet hop except deliver to destination wallet
+    /// Since we MUST pass the destination wallet address in the accounts section,
+    /// and it must match the set `pod.destination` already; there is no need for further destination checks here.
+    pub fn land(ctx: Context<LandAccount>) -> Result<()> {
+        let pod: &mut Account<Pod> = &mut ctx.accounts.pod;
+        let from: &mut Account<Planet> = &mut ctx.accounts.from_planet;
+        let delivery_lamports = pod.lamports;
 
-    // Easy way to fix any imbalances in the planet
+        // Check planet is unlocked
+        validate_planet_is_usable(from,pod.key())?;
+
+        // VALIDATION: Prevent a double-landing or underfunded source
+        require!(delivery_lamports > 0, OridionError::AlreadyLanded);
+        require!(from.get_lamports() >= delivery_lamports,OridionError::PlanetNotEnoughFundsError);
+
+        // TRANSFER funds from Planet → Destination
+        ctx.accounts.destination.add_lamports(delivery_lamports)?;
+        from.sub_lamports(delivery_lamports)?;
+
+        // DRAIN any residual lamports in the pod PDA to Manager
+        let pod_info = pod.to_account_info();
+        let remaining = pod_info.lamports();
+
+        // Prevent self-drain bug (if pod.lamports is 0, we shouldn't do this)
+        if remaining > 0 {
+            **ctx.accounts.manager.to_account_info().lamports.borrow_mut() += remaining;
+            **pod_info.lamports.borrow_mut() -= remaining;
+        }
+
+        //Release planet lock
+        release_planet_lock(from)?;
+        Ok(())
+    }
+
+
+    //Force land pod by signer
+    pub fn emergency_land_by_creator(
+        ctx: Context<EmergencyLandByCreator>
+    ) -> Result<()> {
+        let pod = &mut ctx.accounts.pod;
+        let from_planet = &mut ctx.accounts.from_planet;
+        let delivery_lamports = pod.lamports;
+
+        let now = Clock::get()?.unix_timestamp;
+        require!(
+            now > pod.created_at + 180, // 3 minutes
+            OridionError::TooSoonToEmLand
+        );
+
+        // Check planet is unlocked
+        validate_planet_is_usable(from_planet, pod.key())?;
+
+        // VALIDATION: Prevent a double-landing or underfunded source
+        require!(delivery_lamports > 0, OridionError::AlreadyLanded);
+        require!(
+            from_planet.get_lamports() >= delivery_lamports,
+            OridionError::PlanetNotEnoughFundsError
+        );
+
+        // Destinations must match
+        require!(
+            ctx.accounts.destination.key() == pod.destination,
+            OridionError::InvalidDestination
+        );
+
+        // TRANSFER funds from Planet → Destination
+        ctx.accounts.destination.add_lamports(delivery_lamports)?;
+        from_planet.sub_lamports(delivery_lamports)?;
+
+        release_planet_lock(from_planet)?;
+        Ok(())
+    }
+
+
+
+    /// Emergency land with code
+    pub fn emergency_land_with_code(
+        ctx: Context<EmergencyLandWithCode>,
+        passcode: String, // user provides passcode as plain text
+    ) -> Result<()> {
+        let pod = &mut ctx.accounts.pod;
+        let from_planet = &mut ctx.accounts.from_planet;
+
+        // 1. Ensure the planet is usable and not locked by someone else
+        validate_planet_is_usable(from_planet, pod.key())?;
+
+        // 2. Prevent double-landing and check planet funding
+        require!(pod.lamports > 0, OridionError::AlreadyLanded);
+        require!(
+            from_planet.get_lamports() >= pod.lamports,
+            OridionError::PlanetNotEnoughFundsError
+        );
+
+        // 3. Validate passcode hash
+        use anchor_lang::solana_program::keccak::hash;
+        let clean_passcode = passcode.trim().to_ascii_uppercase();
+        let hash = hash(clean_passcode.as_bytes());
+        require!(
+            hash.to_bytes() == pod.passcode_hash,
+            OridionError::InvalidPasscode
+        );
+
+        // 4. Destination safety check
+        require!(
+            ctx.accounts.destination.key() == pod.destination,
+            OridionError::InvalidDestination
+        );
+
+        // 5. Transfer lamports from planet to destination
+        let delivery_lamports = pod.lamports;
+        ctx.accounts.destination.add_lamports(delivery_lamports)?;
+        from_planet.sub_lamports(delivery_lamports)?;
+
+        // 6. Release lock
+        release_planet_lock(from_planet)?;
+
+        Ok(())
+    }
+
+
+    /// REBALANCE - Easy way to fix any imbalances in the planet
     pub fn rebalance_planet(ctx: Context<BalancePlanets>, amount_lamports: u64) -> Result<()>{
 
         //Balance from/to
