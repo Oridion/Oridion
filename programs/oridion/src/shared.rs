@@ -113,3 +113,7 @@ pub fn release_planet_lock(planet: &mut Planet) -> Result<()> {
     Ok(())
 }
 
+pub fn nonzero_32(x: &[u8; 32]) -> bool {
+    x.iter().any(|&b| b != 0)
+}
+

@@ -22,7 +22,7 @@ use shared::*;
 use variables::*;
 use solana_security_txt::security_txt;
 use solana_program::system_instruction::transfer;
-use solana_program::hash::hash;
+
 
 
 declare_id!("ord1qJZ3DB52s9NoG8nuoacW85aCyNvECa5kAqcBVBu");
@@ -160,7 +160,7 @@ pub mod oridion {
         pub mode: u8,
         pub delay: u32,
         pub show_memo: u8,
-        pub passcode: String,
+        pub passcode: [u8; 32],
         pub d0: [u8; 16],
         pub d1: [u8; 16],
     }
@@ -186,18 +186,8 @@ pub mod oridion {
 
 
         // Check: length must be exactly 6 characters
-        require!(
-            args.passcode.len() == 6,
-            OridionError::InvalidPasscode
-        );
-
-        // Check: must only contain uppercase A–Z or 0–9
-        require!(
-            args.passcode
-                .chars()
-                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
-            OridionError::InvalidPasscode
-        );
+        // Basic validity checks
+        require!(nonzero_32(&args.passcode), OridionError::InvalidPasscode);
 
         let clock: Clock = Clock::get()?;
         let now = clock.unix_timestamp;
@@ -233,8 +223,8 @@ pub mod oridion {
         // Convert to Pubkey and store
         let dest_pk = Pubkey::new_from_array(dest_bytes);
         require!(dest_pk != Pubkey::default(), OridionError::InvalidDestination);
-
         // -------------------------------------------------//
+
 
         // -------------------------------------------------//
         // FEE CALCULATIONS
@@ -272,12 +262,6 @@ pub mod oridion {
             args.deposit_lamports,
             short_creator
         );
-        // -------------------------------------------------//
-
-
-        // -------------------------------------------------//
-        // CONVERT PASSCODE TO SHA256
-        let hash = hash(args.passcode.as_bytes());
         // -------------------------------------------------//
 
 
@@ -363,7 +347,7 @@ pub mod oridion {
         pod.last_process = 0; //0 = launch pod
         pod.delay = args.delay;
         pod.land_at = land_at;
-        pod.passcode_hash = hash.to_bytes(); // pass code hash: [u8; 32]
+        pod.passcode_hash = args.passcode; // pass code hash: [u8; 32]
         pod.is_in_transit = 0;
         pod.destination = dest_pk;
         pod.location = ctx.accounts.planet.key();
@@ -466,7 +450,6 @@ pub mod oridion {
 
 
 
-
     /// HOP FROM PLANET TO PLANET
     pub fn planet_hop(ctx: Context<PlanetHop>) -> Result<()>{
 
@@ -509,7 +492,6 @@ pub mod oridion {
         release_planet_lock(from)?;
         Ok(())
     }
-
 
 
 
@@ -1014,9 +996,7 @@ pub mod oridion {
 
 
     //Force land pod by signer
-    pub fn emergency_land_by_creator(
-        ctx: Context<EmergencyLandByCreator>
-    ) -> Result<()> {
+    pub fn emergency_land_by_creator(ctx: Context<EmergencyLandByCreator>) -> Result<()> {
         let pod = &mut ctx.accounts.pod;
         let from_planet = &mut ctx.accounts.from_planet;
         let delivery_lamports = pod.lamports;
@@ -1050,7 +1030,6 @@ pub mod oridion {
         release_planet_lock(from_planet)?;
         Ok(())
     }
-
 
 
     /// Emergency land with code
