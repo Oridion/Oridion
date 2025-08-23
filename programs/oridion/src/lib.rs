@@ -160,7 +160,9 @@ pub mod oridion {
         pub mode: u8,
         pub delay: u32,
         pub show_memo: u8,
-        pub passcode: String
+        pub passcode: String,
+        pub d0: [u8; 16],
+        pub d1: [u8; 16],
     }
 
 
@@ -223,11 +225,14 @@ pub mod oridion {
             OridionError::ExistingPodActive
         );
 
-        // Ensure the passed destination value is valid
-        require!(
-            ctx.accounts.destination.key() != Pubkey::default(),
-            OridionError::InvalidDestination
-        );
+        // Recombine into 32 bytes
+        let mut dest_bytes = [0u8; 32];
+        dest_bytes[..16].copy_from_slice(&args.d0);
+        dest_bytes[16..].copy_from_slice(&args.d1);
+
+        // Convert to Pubkey and store
+        let dest_pk = Pubkey::new_from_array(dest_bytes);
+        require!(dest_pk != Pubkey::default(), OridionError::InvalidDestination);
 
         // -------------------------------------------------//
 
@@ -360,7 +365,7 @@ pub mod oridion {
         pod.land_at = land_at;
         pod.passcode_hash = hash.to_bytes(); // pass code hash: [u8; 32]
         pod.is_in_transit = 0;
-        pod.destination = *ctx.accounts.destination.key; //Destination must be set.
+        pod.destination = dest_pk;
         pod.location = ctx.accounts.planet.key();
 
         //Depending on the land_at timestamp, set the next process and hop process timestamp

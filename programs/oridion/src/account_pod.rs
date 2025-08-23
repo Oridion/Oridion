@@ -51,7 +51,6 @@ pub struct CreatePod<'info> {
     ///        Used only to receive lamports — no data validation required.
     #[account(mut,seeds = [b"treasury"],bump)]
     pub treasury: AccountInfo<'info>,
-    pub destination: SystemAccount<'info>,
     pub system_program: Program<'info,System>
 }
 
