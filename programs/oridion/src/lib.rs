@@ -32,7 +32,7 @@ security_txt! {
     name: "Oridion",
     website: "https://oridion.xyz",
     project_url: "https://oridion.xyz",
-    source_code: "https://github.com/Oridion/oridion_anchor",
+    source_code: "https://github.com/Oridion/oridion",
     preferred_languages: "en",
     contacts: "twitter:@OridionGalaxy,email:oridion.xyz@gmail.com",
     policy: "https://oridion.xyz/privacy-policy"
