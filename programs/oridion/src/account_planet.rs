@@ -38,15 +38,7 @@ pub struct DeletePlanet<'info> {
     pub creator: Signer<'info>,
 }
 
-#[derive(Accounts)]
-pub struct BalancePlanets<'info> {
-    #[account(mut)]
-    pub from_planet: Account<'info, Planet>,
-    #[account(mut)]
-    pub to_planet: Account<'info, Planet>,
-    #[account(mut, address = MANAGER_PUBKEY)]
-    pub creator: Signer<'info>,
-}
+
 
 #[derive(Accounts)]
 pub struct LockPlanet<'info> {

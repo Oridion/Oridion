@@ -1,3 +1,5 @@
+use anchor_lang::solana_program::hash::hashv;
+use crate::account_land::LandBook;
 use super::*;
 
 #[repr(u8)]
@@ -18,31 +20,71 @@ pub fn mode_string(mode: u8) -> &'static str {
 }
 
 
+// Map a hash to a jitter in [min_s, max_s] (inclusive)
+fn jitter_seconds(pod: &Pod, slot: u64, min_s: i64, max_s: i64) -> i64 {
+    let idb = pod.id.to_le_bytes();
+    let hopsb = pod.hops.to_le_bytes();
+    let cab = pod.created_at.to_le_bytes();
+    let slotb = slot.to_le_bytes();
+
+    let h = hashv(&[
+        b"ORIDION_HOP_JITTER_V1",
+        &idb,
+        &hopsb,
+        &cab,
+        &slotb,
+    ]).to_bytes();
+
+    let r = u64::from_le_bytes(h[0..8].try_into().unwrap());
+    let span = (max_s - min_s + 1) as u64; // e.g., 121
+    min_s + (r % span) as i64
+}
+
 /// Handles common hop details
-pub fn hop_pod(pod: &mut Account<Pod>){
-    let clock: Clock = Clock::get().unwrap();
+pub fn hop_pod(pod: &mut Account<Pod>, book: &mut Account<LandBook>) -> Result<()> {
+    let clock = Clock::get()?;
     let now = clock.unix_timestamp;
     let land_time = pod.land_at;
 
-    pod.hops += 1;
-    pod.last_process = 1; // Last action -> (1 = hop)
+    pod.hops = pod.hops.saturating_add(1);
+    pod.last_process = 1; // hop
     pod.last_process_at = now;
 
-    //Manual, Instant, Delay
-    //Since we will be able to trigger hop manually through lambda function,
-    //We only update here pods that are a delay type
+    // Delay mode only
     if pod.mode == 1 {
-        //Depending on the land timestamp, set the next process and hop process timestamp
-        if (now + 180) > land_time {
-            //Landing is the next action.
-            pod.next_process = 1; //1 = land
-            pod.next_process_at = land_time;
+        let remaining = land_time.saturating_sub(now);
+
+        if remaining <= 240 {
+            // Only transition to LAND once
+            if pod.next_process != 1 {
+                pod.next_process = 1;  // land
+                pod.next_process_at = land_time;
+
+                // Compute land token (binds id+dest+amount+created_at)
+                let tok = token_from(pod.id, &pod.destination, pod.lamports, pod.created_at);
+
+                // Push only if not already present (idempotent)
+                if !book.tickets.iter().any(|t| *t == tok) {
+                    // Optional: cap to prevent accidental growth
+                    require!(book.tickets.len() < 128, OridionError::LandBookFull);
+                    book.tickets.push(tok);
+                }
+            }
         } else {
-            //Set the next hop processing timestamp
-            pod.next_process = 0; //0 = hop
-            pod.next_process_at = now + 180;
+            // Randomize the next hop between 2–4 minutes
+            let jitter = jitter_seconds(pod, clock.slot, 120, 240);
+            let mut next = now.saturating_add(jitter);
+
+            // Clamp so we don't schedule past the planned land time
+            if next >= land_time {
+                // a few seconds before land to ensure we cross the threshold next time
+                next = land_time.saturating_sub(5);
+            }
+            pod.next_process = 0;  // hop
+            pod.next_process_at = next;
         }
     }
+    Ok(())
 }
 
 
@@ -117,3 +159,27 @@ pub fn nonzero_32(x: &[u8; 32]) -> bool {
     x.iter().any(|&b| b != 0)
 }
 
+
+/// Generates land token for the guarantee of unchanged destination.
+pub fn token_from(
+    id: u16,
+    dest: &Pubkey,
+    amount: u64,
+    created_at: i64,
+) -> [u8;16] {
+    let idb = id.to_le_bytes();
+    let amb = amount.to_le_bytes();
+    let cab = created_at.to_le_bytes();
+    let destb = dest.as_ref();
+
+    // include a domain/version string to future-proof the format
+    let digest = hashv(&[
+        b"ORIDION_LAND_V1",
+        &idb,
+        destb,
+        &amb,
+        &cab,
+    ]).to_bytes();
+
+    digest[0..16].try_into().unwrap()
+}

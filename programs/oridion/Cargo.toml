@@ -1,7 +1,7 @@
 [package]
 name = "oridion"
-version = "3.0.2"
-description = "Solana Oridion Galaxy"
+version = "4.0.0"
+description = "Oridion Galaxy"
 edition = "2021"
 
 [lib]
@@ -10,14 +10,9 @@ name = "oridion"
 
 [features]
 no-entrypoint = []
-no-idl = []
-no-log-ix-name = []
-cpi = ["no-entrypoint"]
-default = []
 idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
-solana-program = "1.18.26"
-anchor-lang = {version = "0.30.1", features = ["init-if-needed"]}
+anchor-lang = {version = "0.31.1", features = ["init-if-needed"]}
 solana-security-txt = "1.1.1"
-spl-memo = { version = "3.0.1", features = ["no-entrypoint"] }
+spl-memo = { version = "6.0.0", features = ["no-entrypoint"] }

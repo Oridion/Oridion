@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use crate::account_land::LandBook;
 use crate::account_star::{Star, StarMeta};
 use super::*;
 
@@ -11,6 +12,8 @@ pub struct PlanetHop<'info> {
     pub to_planet: Account<'info, Planet>,
     #[account(mut)]
     pub from_planet: Account<'info, Planet>,
+    #[account(mut)]
+    pub book: Account<'info, LandBook>,
     #[account(mut, address = MANAGER_PUBKEY)]
     pub manager: Signer<'info>
 }
@@ -69,6 +72,9 @@ pub struct StarHopTwoEnd<'info> {
     pub star_one: Account<'info, Star>,
     #[account(mut, close = manager, has_one = manager, constraint = manager.key == &star_two.manager)]
     pub star_two: Account<'info, Star>,
+
+    #[account(mut)]
+    pub book: Account<'info, LandBook>,
 
     #[account(
         mut,
@@ -145,7 +151,9 @@ pub struct StarHopThreeEnd<'info> {
     #[account(mut, close = manager, has_one = manager, constraint = manager.key == &star_three.manager)]
     pub star_three: Account<'info, Star>,
 
-    // #[account(mut,close = manager)] Emergency fix
+    #[account(mut)]
+    pub book: Account<'info, LandBook>,
+
     #[account(
         mut,
         seeds = [b"star_three", pod.key().as_ref()],
@@ -216,6 +224,9 @@ pub struct ScatterEnd<'info> {
     #[account(mut)]
     pub from_planet_3: Account<'info, Planet>,
 
+    #[account(mut)]
+    pub book: Account<'info, LandBook>,
+
     #[account(
         mut,
         seeds = [b"scatter", pod.key().as_ref()],
@@ -229,17 +240,28 @@ pub struct ScatterEnd<'info> {
 }
 
 
+/// Destination is checked through a token and cannot be changed.
 #[derive(Accounts)]
 pub struct LandAccount<'info> {
-    #[account(mut, close = manager)]
-    pub pod: Account<'info, Pod>,
+    #[account(mut)]
+    pub book: Account<'info, LandBook>,
     #[account(mut)]
     pub from_planet: Account<'info, Planet>,
-    #[account(mut, address = pod.destination)]
+    #[account(mut)]
     pub destination: SystemAccount<'info>,
     #[account(mut, address = MANAGER_PUBKEY)]
     pub manager: Signer<'info>
 }
+
+
+#[derive(Accounts)]
+pub struct ClosePod<'info> {
+    #[account(mut, close = manager)]
+    pub pod: Account<'info, Pod>,
+    #[account(mut, address = MANAGER_PUBKEY)]
+    pub manager: Signer<'info>,
+}
+
 
 //Emergency Land - by creator
 #[derive(Accounts)]
@@ -272,3 +294,4 @@ pub struct EmergencyLandByCreator<'info> {
     #[account(mut, address = pod.destination)]
     pub destination: SystemAccount<'info>,
 }
+

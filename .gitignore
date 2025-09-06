@@ -30,3 +30,5 @@ verfiy.sh
 Dockerfile.verify
 solana-install.sh
 deployed.so
+
+Dockerfile

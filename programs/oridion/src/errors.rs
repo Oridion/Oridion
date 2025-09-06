@@ -69,5 +69,9 @@ pub enum OridionError {
     #[msg("Invalid star meta account passed")]
     InvalidStarMetaPda,
     #[msg("PDA already initialized")]   
-    PdaAlreadyInitialized
+    PdaAlreadyInitialized,
+    #[msg("Land ticket not found")]
+    TicketNotFound,
+    #[msg("Land book is full")]
+    LandBookFull,
 }
