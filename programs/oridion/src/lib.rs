@@ -21,6 +21,7 @@ use all_accounts::*;
 use errors::*;
 use shared::*;
 use variables::*;
+use spl_memo;
 
 use anchor_lang::prelude::*;
 use solana_security_txt::security_txt;
