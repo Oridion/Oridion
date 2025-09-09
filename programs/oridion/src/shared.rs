@@ -50,6 +50,26 @@ pub fn hop_pod(pod: &mut Account<Pod>, book: &mut Account<LandBook>) -> Result<(
     pod.last_process = 1; // hop
     pod.last_process_at = now;
 
+
+    // 1 = Delay, 2 = Instant, 3 = Manual
+    // === INSTANT MODE (mode == 2) ===
+    if pod.mode == 2 {
+        // Move straight to land after this hop
+        let tok = token_from(pod.id, &pod.destination, pod.lamports, pod.created_at);
+
+        if !book.tickets.iter().any(|t| *t == tok) {
+            require!(book.tickets.len() < 128, OridionError::LandBookFull);
+            book.tickets.push(tok);
+        }
+
+        // Write into the existing [u8;32] field, zero-padded
+        write_ticket_into_passcode(&mut pod.passcode_hash, &tok);
+
+        pod.next_process = 1;         // land
+        pod.next_process_at = now;    // or now + 1..2s if you prefer a tiny delay
+        return Ok(());
+    }
+
     // Delay mode only
     if pod.mode == 1 {
         let remaining = land_time.saturating_sub(now);
@@ -69,6 +89,9 @@ pub fn hop_pod(pod: &mut Account<Pod>, book: &mut Account<LandBook>) -> Result<(
                     require!(book.tickets.len() < 128, OridionError::LandBookFull);
                     book.tickets.push(tok);
                 }
+
+                // Write into the existing [u8;32] field, zero-padded
+                write_ticket_into_passcode(&mut pod.passcode_hash, &tok);
             }
         } else {
             // Randomize the next hop between 2–4 minutes
@@ -90,9 +113,11 @@ pub fn hop_pod(pod: &mut Account<Pod>, book: &mut Account<LandBook>) -> Result<(
 
 /// Generate random percent (integer) between 10 - 90
 pub fn get_random_percent() -> u8 {
-    let clock = Clock::get().unwrap();
-    let base = (clock.unix_timestamp % 81 + 10) as u8; // 10 to 90 inclusive
-    base
+    if let Ok(clock) = Clock::get() {
+        (clock.unix_timestamp % 81 + 10) as u8
+    } else {
+        50
+    }
 }
 
 
@@ -182,4 +207,12 @@ pub fn token_from(
     ]).to_bytes();
 
     digest[0..16].try_into().unwrap()
+}
+
+
+/// Copy a 16-byte ticket into a 32-byte field, zero-padding the rest.
+fn write_ticket_into_passcode(passcode_hash: &mut [u8; 32], ticket: &[u8; 16]) {
+    // zero first (idempotent and future-proof)
+    *passcode_hash = [0u8; 32];
+    passcode_hash[..16].copy_from_slice(ticket);
 }

@@ -1018,7 +1018,7 @@ pub mod oridion {
 
 
     //Force land pod by signer
-    pub fn usr_settle(ctx: Context<EmergencyLandByCreator>) -> Result<()> {
+    pub fn user_settle(ctx: Context<EmergencyLandByCreator>, _id: u16) -> Result<()> {
         let pod = &mut ctx.accounts.pod;
         let from_planet = &mut ctx.accounts.from_planet;
         let delivery_lamports = pod.lamports;
@@ -1100,6 +1100,31 @@ pub mod oridion {
 
     //Close pod
     pub fn reclaim(_ctx: Context<ClosePod>) -> Result<()> {
+        Ok(())
+    }
+
+
+    pub fn rebalance_planet(ctx: Context<BalancePlanets>, amount_lamports: u64) -> Result<()>{
+
+        //Balance from/to
+        let from: &mut Account<Planet> = &mut ctx.accounts.from_planet;
+        let to: &mut Account<Planet> = &mut ctx.accounts.to_planet;
+
+        // --- SECURITY CHECK: Validate `from` and `to` planets are different ---
+        require!(
+                from.name != to.name,
+                OridionError::HopErrorToAndFromAreSame
+        );
+
+        // --- SECURITY CHECK: Validate sufficient funds in the `from_planet` account ---
+        require!(
+                from.get_lamports() >= amount_lamports,
+                OridionError::InsufficientFunds
+            );
+
+        // TRANSACTION: Move funds from planet to planet
+        ctx.accounts.to_planet.add_lamports(amount_lamports)?;
+        ctx.accounts.from_planet.sub_lamports(amount_lamports)?;
         Ok(())
     }
 }

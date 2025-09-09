@@ -26,9 +26,5 @@ target/verifiable/
 
 programs/oridion/src/migration.rs
 Anchor.toml
-verfiy.sh
-Dockerfile.verify
-solana-install.sh
 deployed.so
-
-Dockerfile
+onchain.so

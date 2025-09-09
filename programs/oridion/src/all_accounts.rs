@@ -275,11 +275,11 @@ pub struct EmergencyLandWithCode<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(pod_id: String)]
+#[instruction(id: u16)]
 pub struct EmergencyLandByCreator<'info> {
     #[account(
         mut,
-        seeds = [b"pod", creator.key().as_ref(), pod_id.as_bytes()],
+        seeds = [b"pod", creator.key().as_ref(), &id.to_le_bytes()],
         bump,
         close = creator
     )]
@@ -295,3 +295,14 @@ pub struct EmergencyLandByCreator<'info> {
     pub destination: SystemAccount<'info>,
 }
 
+
+#[derive(Accounts)]
+#[instruction(amount_lamports: u64)]
+pub struct BalancePlanets<'info> {
+    #[account(mut)]
+    pub to_planet: Account<'info,Planet>,
+    #[account(mut)]
+    pub from_planet: Account<'info,Planet>,
+    #[account(mut, address = MANAGER_PUBKEY)]
+    pub manager: Signer<'info>
+}
