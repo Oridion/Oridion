@@ -12,7 +12,11 @@ pub struct PlanetHop<'info> {
     pub to_planet: Account<'info, Planet>,
     #[account(mut)]
     pub from_planet: Account<'info, Planet>,
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"land_book"],
+        bump
+    )]
     pub book: Account<'info, LandBook>,
     #[account(mut, address = MANAGER_PUBKEY)]
     pub manager: Signer<'info>
@@ -23,10 +27,10 @@ pub struct PlanetHop<'info> {
 #[instruction(star_one_id: String, star_two_id: String)]
 pub struct StarHopTwoStart<'info> {
     #[account(mut)]
-    pub pod: Account<'info, crate::account_pod::Pod>,
+    pub pod: Account<'info, Pod>,
 
     #[account(mut)]
-    pub from_planet: Account<'info, crate::account_planet::Planet>,
+    pub from_planet: Account<'info, Planet>,
     #[account(init, payer = manager, space = 8 + Star::INIT_SPACE,
         seeds = [
             STAR_SEED_PRE,
@@ -65,15 +69,19 @@ pub struct StarHopTwoStart<'info> {
 #[derive(Accounts)]
 pub struct StarHopTwoEnd<'info> {
     #[account(mut)]
-    pub pod: Account<'info, crate::account_pod::Pod>,
+    pub pod: Account<'info, Pod>,
     #[account(mut)]
-    pub to_planet: Account<'info, crate::account_planet::Planet>,
+    pub to_planet: Account<'info, Planet>,
     #[account(mut, close = manager, has_one = manager, constraint = manager.key == &star_one.manager)]
     pub star_one: Account<'info, Star>,
     #[account(mut, close = manager, has_one = manager, constraint = manager.key == &star_two.manager)]
     pub star_two: Account<'info, Star>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"land_book"],
+        bump
+    )]
     pub book: Account<'info, LandBook>,
 
     #[account(
@@ -93,10 +101,10 @@ pub struct StarHopTwoEnd<'info> {
 #[instruction(star_one_id: String, star_two_id: String, star_three_id: String )]
 pub struct StarHopThreeStart<'info> {
     #[account(mut)]
-    pub pod: Account<'info, crate::account_pod::Pod>,
+    pub pod: Account<'info, Pod>,
 
     #[account(mut)]
-    pub from_planet: Account<'info, crate::account_planet::Planet>,
+    pub from_planet: Account<'info, Planet>,
     #[account(init, payer = manager, space = 8 + Star::INIT_SPACE,
         seeds = [
             STAR_SEED_PRE,
@@ -141,9 +149,9 @@ pub struct StarHopThreeStart<'info> {
 #[derive(Accounts)]
 pub struct StarHopThreeEnd<'info> {
     #[account(mut)]
-    pub pod: Account<'info, crate::account_pod::Pod>,
+    pub pod: Account<'info, Pod>,
     #[account(mut)]
-    pub to_planet: Account<'info, crate::account_planet::Planet>,
+    pub to_planet: Account<'info, Planet>,
     #[account(mut, close = manager, has_one = manager, constraint = manager.key == &star_one.manager)]
     pub star_one: Account<'info, Star>,
     #[account(mut, close = manager, has_one = manager, constraint = manager.key == &star_two.manager)]
@@ -151,7 +159,11 @@ pub struct StarHopThreeEnd<'info> {
     #[account(mut, close = manager, has_one = manager, constraint = manager.key == &star_three.manager)]
     pub star_three: Account<'info, Star>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"land_book"],
+        bump
+    )]
     pub book: Account<'info, LandBook>,
 
     #[account(
@@ -224,7 +236,11 @@ pub struct ScatterEnd<'info> {
     #[account(mut)]
     pub from_planet_3: Account<'info, Planet>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"land_book"],
+        bump
+    )]
     pub book: Account<'info, LandBook>,
 
     #[account(
@@ -243,7 +259,11 @@ pub struct ScatterEnd<'info> {
 /// Destination is checked through a token and cannot be changed.
 #[derive(Accounts)]
 pub struct LandAccount<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"land_book"],
+        bump
+    )]
     pub book: Account<'info, LandBook>,
     #[account(mut)]
     pub from_planet: Account<'info, Planet>,
@@ -256,27 +276,34 @@ pub struct LandAccount<'info> {
 
 #[derive(Accounts)]
 pub struct ClosePod<'info> {
-    #[account(mut, close = manager)]
+    #[account(mut)]
+    pub pod_meta: Account<'info, PodMeta>,
+    #[account(mut,
+        close = manager,
+        constraint = pod.next_process == 1 @ OridionError::PodCloseError,
+        constraint = pod.is_in_transit == 0 @ OridionError::PodCloseError,
+    )]
     pub pod: Account<'info, Pod>,
+    #[account(
+        mut,
+        seeds = [b"land_book"],
+        bump
+    )]
+    pub book: Account<'info, LandBook>,
     #[account(mut, address = MANAGER_PUBKEY)]
     pub manager: Signer<'info>,
 }
 
 
-//Emergency Land - by creator
-#[derive(Accounts)]
-pub struct EmergencyLandWithCode<'info> {
-    #[account(mut, close = destination)]
-    pub pod: Account<'info, Pod>,
-    #[account(mut)]
-    pub from_planet: Account<'info, Planet>,
-    #[account(mut, address = pod.destination)]
-    pub destination: SystemAccount<'info>,
-}
-
+// Emergency land by creator
 #[derive(Accounts)]
 #[instruction(id: u16)]
 pub struct EmergencyLandByCreator<'info> {
+    #[account(
+        seeds = [b"pod_meta", creator.key().as_ref()],
+        bump
+    )]
+    pub pod_meta: Account<'info, PodMeta>,
     #[account(
         mut,
         seeds = [b"pod", creator.key().as_ref(), &id.to_le_bytes()],
@@ -291,7 +318,7 @@ pub struct EmergencyLandByCreator<'info> {
     /// The creator is the signer who originally derived the pod PDA.
     pub creator: Signer<'info>,
 
-    #[account(mut, address = pod.destination)]
+    #[account(mut)]
     pub destination: SystemAccount<'info>,
 }
 
@@ -306,3 +333,7 @@ pub struct BalancePlanets<'info> {
     #[account(mut, address = MANAGER_PUBKEY)]
     pub manager: Signer<'info>
 }
+
+
+
+

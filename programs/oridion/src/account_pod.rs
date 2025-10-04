@@ -3,7 +3,6 @@ use super::*;
 #[account]
 #[derive(InitSpace)]
 pub struct PodMeta {
-    pub authority: Pubkey,
     #[max_len(50)]
     pub ids: Vec<u16>,
     pub created_at: i64,
@@ -14,6 +13,12 @@ impl PodMeta {
         if len > MAX_USER_META_PODS {
             let excess = len - MAX_USER_META_PODS;
             self.ids.drain(0..excess); // 🧹 remove oldest items
+        }
+    }
+
+    pub fn remove_id(&mut self, id: u16) {
+        if let Some(pos) = self.ids.iter().position(|x| *x == id) {
+            self.ids.remove(pos);
         }
     }
 }
@@ -65,14 +70,6 @@ pub enum ActivityAction {
     Scatter = 4
 }
 
-#[repr(C)]
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, InitSpace)]
-pub struct ActivityEntry {
-    pub action: u8,            // 0 = Launch pod, 1 = Hop, 2 = star_2, 3 = star_3, 4 = scatter, 5 = Land
-    pub to: [u8;10],            // Destination planet 10 char string
-    pub time: i64,             // Unix timestamp
-}
-
 // Pod data
 #[account]
 #[repr(C)]
@@ -102,57 +99,9 @@ pub struct Pod {
 
     // 32-byte fields
     pub location: Pubkey, // Current planet location
-    pub destination: Pubkey, //Destination wallet address
+    pub destination: [u8; 32], //Destination wallet address
 
     // 6-byte alphanumeric emergency passcode hash (e.g., "A7X93B")
     pub passcode_hash: [u8; 32],
-
-    pub log: [ActivityEntry; 10], //Stores history during the lifespan of the pod
-    pub log_index: u8,
+    pub authority: [u8; 32], //Authority wallet address
 }
-impl Pod {
-    pub fn init_log(&mut self, planet_key: &str, now: i64) {
-        let mut entry = ActivityEntry {
-            action: ActivityAction::Launch as u8,
-            to: [0u8; 10],
-            time: now,
-        };
-
-        let bytes = planet_key.as_bytes();
-        let len = bytes.len().min(10);
-        entry.to[..len].copy_from_slice(&bytes[..len]);
-
-        self.log[0] = entry;
-        self.log_index = 1;
-    }
-
-    pub fn log_activity(&mut self, action: u8, to: &str) -> Result<()> {
-        let now = Clock::get()?.unix_timestamp;
-
-        let mut entry = ActivityEntry {
-            action,
-            to: [0u8; 10],
-            time: now,
-        };
-
-        let bytes = to.as_bytes();
-        let len = bytes.len().min(10);
-        entry.to[..len].copy_from_slice(&bytes[..len]);
-
-        let index = self.log_index as usize;
-
-        if index < 10 {
-            self.log[index] = entry;
-            self.log_index += 1;
-        } else {
-            // Shift all entries left by 1
-            for i in 1..10 {
-                self.log[i - 1] = self.log[i];
-            }
-            // Place a new entry at the end
-            self.log[9] = entry;
-        }
-        Ok(())
-    }
-}
-

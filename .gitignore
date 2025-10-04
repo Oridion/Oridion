@@ -26,5 +26,4 @@ target/verifiable/
 
 programs/oridion/src/migration.rs
 Anchor.toml
-deployed.so
-onchain.so
+*.so

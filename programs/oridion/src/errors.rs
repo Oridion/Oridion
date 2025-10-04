@@ -72,6 +72,10 @@ pub enum OridionError {
     PdaAlreadyInitialized,
     #[msg("Land ticket not found")]
     TicketNotFound,
+    #[msg("Land ticket found. Cannot close!")]
+    TicketFoundCloseError,
     #[msg("Land book is full")]
     LandBookFull,
+    #[msg("Pod cannot be closed")]
+    PodCloseError,
 }

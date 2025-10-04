@@ -50,12 +50,12 @@ pub fn hop_pod(pod: &mut Account<Pod>, book: &mut Account<LandBook>) -> Result<(
     pod.last_process = 1; // hop
     pod.last_process_at = now;
 
-
     // 1 = Delay, 2 = Instant, 3 = Manual
-    // === INSTANT MODE (mode == 2) ===
+
+    // === INSTANT MODE (mode == 2) === //
     if pod.mode == 2 {
         // Move straight to land after this hop
-        let tok = token_from(pod.id, &pod.destination, pod.lamports, pod.created_at);
+        let tok = token_from(pod.id, pod.lamports, pod.created_at);
 
         if !book.tickets.iter().any(|t| *t == tok) {
             require!(book.tickets.len() < 128, OridionError::LandBookFull);
@@ -70,7 +70,7 @@ pub fn hop_pod(pod: &mut Account<Pod>, book: &mut Account<LandBook>) -> Result<(
         return Ok(());
     }
 
-    // Delay mode only
+    // === DELAY MODE (mode == 1) === //
     if pod.mode == 1 {
         let remaining = land_time.saturating_sub(now);
 
@@ -81,7 +81,7 @@ pub fn hop_pod(pod: &mut Account<Pod>, book: &mut Account<LandBook>) -> Result<(
                 pod.next_process_at = land_time;
 
                 // Compute land token (binds id+dest+amount+created_at)
-                let tok = token_from(pod.id, &pod.destination, pod.lamports, pod.created_at);
+                let tok = token_from(pod.id, pod.lamports, pod.created_at);
 
                 // Push only if not already present (idempotent)
                 if !book.tickets.iter().any(|t| *t == tok) {
@@ -188,20 +188,17 @@ pub fn nonzero_32(x: &[u8; 32]) -> bool {
 /// Generates land token for the guarantee of unchanged destination.
 pub fn token_from(
     id: u16,
-    dest: &Pubkey,
     amount: u64,
     created_at: i64,
 ) -> [u8;16] {
     let idb = id.to_le_bytes();
     let amb = amount.to_le_bytes();
     let cab = created_at.to_le_bytes();
-    let destb = dest.as_ref();
 
     // include a domain/version string to future-proof the format
     let digest = hashv(&[
         b"ORIDION_LAND_V1",
         &idb,
-        destb,
         &amb,
         &cab,
     ]).to_bytes();
@@ -215,4 +212,12 @@ fn write_ticket_into_passcode(passcode_hash: &mut [u8; 32], ticket: &[u8; 16]) {
     // zero first (idempotent and future-proof)
     *passcode_hash = [0u8; 32];
     passcode_hash[..16].copy_from_slice(ticket);
+}
+
+
+pub fn combine_halves(a: [u8; 16], b: [u8; 16]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[..16].copy_from_slice(&a);
+    out[16..].copy_from_slice(&b);
+    out
 }
