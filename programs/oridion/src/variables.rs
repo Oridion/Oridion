@@ -1,6 +1,12 @@
 use anchor_lang::prelude::*;
 
+#[cfg(not(feature = "localnet-test-authority"))]
 pub const MANAGER_PUBKEY: Pubkey = pubkey!("ordnd8TZFYW4k4MeLrR3qSwXMxezL6W3WryUPYTzLQM");
+
+// Public deterministic test key derived from the byte seed [7; 32].
+// This feature must never be enabled for a devnet or mainnet artifact.
+#[cfg(feature = "localnet-test-authority")]
+pub const MANAGER_PUBKEY: Pubkey = pubkey!("GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB");
 pub const UNIVERSE_PDA_SEED: &[u8] = b"_x0_ORIDION_0x_";
 pub const MAX_USER_META_PODS: usize = 50;
 

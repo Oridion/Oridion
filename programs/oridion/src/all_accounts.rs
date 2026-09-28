@@ -10,7 +10,10 @@ pub struct PlanetHop<'info> {
     pub pod: Account<'info, Pod>,
     #[account(mut)]
     pub to_planet: Account<'info, Planet>,
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = from_planet.key() == pod.location @ OridionError::NotAuthorizedToHop
+    )]
     pub from_planet: Account<'info, Planet>,
     #[account(
         mut,
@@ -29,7 +32,10 @@ pub struct StarHopTwoStart<'info> {
     #[account(mut)]
     pub pod: Account<'info, Pod>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = from_planet.key() == pod.location @ OridionError::NotAuthorizedToHop
+    )]
     pub from_planet: Account<'info, Planet>,
     #[account(init, payer = manager, space = 8 + Star::INIT_SPACE,
         seeds = [
@@ -103,7 +109,10 @@ pub struct StarHopThreeStart<'info> {
     #[account(mut)]
     pub pod: Account<'info, Pod>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = from_planet.key() == pod.location @ OridionError::NotAuthorizedToHop
+    )]
     pub from_planet: Account<'info, Planet>,
     #[account(init, payer = manager, space = 8 + Star::INIT_SPACE,
         seeds = [
@@ -198,7 +207,10 @@ pub struct ScatterStart<'info> {
     #[account(mut)]
     pub pod: Account<'info, Pod>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = from_planet.key() == pod.location @ OridionError::NotAuthorizedToHop
+    )]
     pub from_planet: Account<'info, Planet>,
     #[account(mut)]
     pub to_planet_1: Account<'info, Planet>,
@@ -312,6 +324,8 @@ pub struct EmergencyLandByCreator<'info> {
     )]
     pub pod: Account<'info, Pod>,
 
+    // Recovery deliberately allows the creator to choose a solvent Planet;
+    // binding this to possibly stale Pod state could prevent emergency exit.
     #[account(mut)]
     pub from_planet: Account<'info, Planet>,
 
@@ -333,7 +347,3 @@ pub struct BalancePlanets<'info> {
     #[account(mut, address = MANAGER_PUBKEY)]
     pub manager: Signer<'info>
 }
-
-
-
-

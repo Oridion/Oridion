@@ -1,4 +1,4 @@
-use anchor_lang::solana_program::hash::hashv;
+use solana_sha256_hasher::hashv;
 use crate::account_land::LandBook;
 use super::*;
 
@@ -28,7 +28,7 @@ fn jitter_seconds(pod: &Pod, slot: u64, min_s: i64, max_s: i64) -> i64 {
     let slotb = slot.to_le_bytes();
 
     let h = hashv(&[
-        b"ORIDION_HOP_JITTER_V1",
+        b"ORIDION_HOP_JITTER_V1".as_ref(),
         &idb,
         &hopsb,
         &cab,
@@ -172,6 +172,43 @@ pub fn validate_planet_locked_by_pod(
     Ok(())
 }
 
+/// The balance that must remain in a planet after any withdrawal.
+///
+/// `base_lamports` is the operational reserve configured when the planet was
+/// created. The runtime rent minimum is checked as well so a stale or too-low
+/// configured reserve cannot make the account non-rent-exempt.
+pub fn required_planet_reserve(planet: &Account<Planet>) -> Result<u64> {
+    let rent_minimum = Rent::get()?.minimum_balance(planet.to_account_info().data_len());
+    Ok(planet.base_lamports.max(rent_minimum))
+}
+
+/// Fail closed unless `amount` can be withdrawn while preserving the planet's
+/// operational/rent reserve. Checked arithmetic also rejects impossible sums.
+pub fn require_planet_can_spend(planet: &Account<Planet>, amount: u64) -> Result<()> {
+    let required = required_planet_reserve(planet)?
+        .checked_add(amount)
+        .ok_or(OridionError::UnusualMathError)?;
+    require!(
+        planet.get_lamports() >= required,
+        OridionError::PlanetNotEnoughFundsError
+    );
+    Ok(())
+}
+
+/// Pure form used by off-chain callers and unit tests to mirror the invariant.
+#[cfg(test)]
+pub fn can_spend_preserving_reserve(
+    balance: u64,
+    base_lamports: u64,
+    rent_minimum: u64,
+    amount: u64,
+) -> bool {
+    base_lamports
+        .max(rent_minimum)
+        .checked_add(amount)
+        .is_some_and(|required| balance >= required)
+}
+
 
 /// Resets lock and releases it to be used for withdrawal
 pub fn release_planet_lock(planet: &mut Planet) -> Result<()> {
@@ -197,7 +234,7 @@ pub fn token_from(
 
     // include a domain/version string to future-proof the format
     let digest = hashv(&[
-        b"ORIDION_LAND_V1",
+        b"ORIDION_LAND_V1".as_ref(),
         &idb,
         &amb,
         &cab,
@@ -220,4 +257,78 @@ pub fn combine_halves(a: [u8; 16], b: [u8; 16]) -> [u8; 32] {
     out[..16].copy_from_slice(&a);
     out[16..].copy_from_slice(&b);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_pod() -> Pod {
+        Pod {
+            account_type: 1,
+            version: 1,
+            mode: 1,
+            next_process: 0,
+            last_process: 0,
+            is_in_transit: 0,
+            id: 513,
+            hops: 7,
+            delay: 3600,
+            next_process_at: 0,
+            land_at: 0,
+            created_at: 1_700_000_000,
+            last_process_at: 0,
+            lamports: 1_234_567_890,
+            location: Pubkey::default(),
+            destination: [0; 32],
+            passcode_hash: [0; 32],
+            authority: [0; 32],
+        }
+    }
+
+    #[test]
+    fn land_ticket_hash_matches_pre_upgrade_vector() {
+        assert_eq!(
+            token_from(513, 1_234_567_890, 1_700_000_000),
+            [
+                110, 199, 28, 85, 135, 164, 216, 140, 213, 81, 193, 53, 11, 154, 241,
+                122,
+            ]
+        );
+    }
+
+    #[test]
+    fn spending_preserves_the_greater_of_base_and_rent() {
+        assert!(can_spend_preserving_reserve(101, 1, 10, 91));
+        assert!(!can_spend_preserving_reserve(100, 1, 10, 91));
+        assert!(can_spend_preserving_reserve(101, 10, 1, 91));
+        assert!(!can_spend_preserving_reserve(100, 10, 1, 91));
+    }
+
+    #[test]
+    fn spending_rejects_overflow() {
+        assert!(!can_spend_preserving_reserve(u64::MAX, 1, 1, u64::MAX));
+    }
+
+    #[test]
+    fn hop_jitter_matches_pre_upgrade_vector() {
+        assert_eq!(jitter_seconds(&fixture_pod(), 250_000_000, 120, 240), 178);
+    }
+
+    #[test]
+    fn activity_action_discriminants_remain_explicit() {
+        let actions = [
+            ActivityAction::Launch,
+            ActivityAction::Hop,
+            ActivityAction::Star2,
+            ActivityAction::Star3,
+            ActivityAction::Scatter,
+        ];
+
+        for (expected, action) in actions.into_iter().enumerate() {
+            let mut encoded = Vec::new();
+            action.serialize(&mut encoded).unwrap();
+            assert_eq!(encoded, [expected as u8]);
+        }
+    }
 }
