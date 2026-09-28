@@ -431,10 +431,7 @@ pub mod oridion {
         );
 
         // Validate sufficient funds in the `from_planet` account
-        require!(
-            from.get_lamports() >= pod.lamports,
-            OridionError::InsufficientFunds
-        );
+        require_planet_can_spend(from, pod.lamports)?;
 
         // Update pod with new data
         pod.location = to.key();
@@ -488,6 +485,7 @@ pub mod oridion {
 
         //Make sure the amounts are equal to the pod accounts set lamports amount
         require!(star_one_amount + star_two_amount == pod.lamports, OridionError::StarHopCalculationError);
+        require_planet_can_spend(from, pod.lamports)?;
 
         //Set star key here - must do to prevent errors
         let star1_key = star1.key();
@@ -635,6 +633,7 @@ pub mod oridion {
             star_one_amount + star_two_amount + star_three_amount == pod.lamports,
             OridionError::StarHopCalculationError
         );
+        require_planet_can_spend(from, pod.lamports)?;
 
         let star1_key = star1.key();
         let star2_key = star2.key();
@@ -781,18 +780,18 @@ pub mod oridion {
 
         let total = pod.lamports;
         require!(total > 0, OridionError::InvalidDepositAmount);
-        require!(from.get_lamports() >= total, OridionError::PlanetNotEnoughFundsError);
+        require_planet_can_spend(from, total)?;
 
         // Generate pseudo-random split using block timestamp
         let now = Clock::get()?.unix_timestamp;
-        let rng = anchor_lang::solana_program::keccak::hashv(&[&now.to_le_bytes()]);
+        let rng = solana_keccak_hasher::hashv(&[&now.to_le_bytes()]).to_bytes();
         let mut splits = [0u64; 3];
         let mut remaining = total;
 
         for i in 0..2 {
             let rand_seed = u64::from_le_bytes([
-                rng.0[i], rng.0[i + 1], rng.0[i + 2], rng.0[i + 3],
-                rng.0[i + 4], rng.0[i + 5], rng.0[i + 6], rng.0[i + 7],
+                rng[i], rng[i + 1], rng[i + 2], rng[i + 3],
+                rng[i + 4], rng[i + 5], rng[i + 6], rng[i + 7],
             ]);
             let rand_percent = (rand_seed % 50) + 1;
             let amt = (total * rand_percent) / 100;
@@ -874,10 +873,7 @@ pub mod oridion {
         let mut total_collected: u64 = 0;
         for i in 0..3 {
             let amt = meta.amounts[i];
-            require!(
-                from_planets[i].get_lamports() >= amt,
-                OridionError::PlanetNotEnoughFundsError
-            );
+            require_planet_can_spend(from_planets[i], amt)?;
             total_collected = total_collected
                 .checked_add(amt)
                 .ok_or(OridionError::UnusualMathError)?;
@@ -936,7 +932,7 @@ pub mod oridion {
         let delivery_lamports = args.l;
 
         // 2) VALIDATION: Prevent lamports over spend
-        require!(from.get_lamports() >= delivery_lamports,OridionError::PlanetNotEnoughFundsError);
+        require_planet_can_spend(from, delivery_lamports)?;
 
         // 3) TRANSFER funds from Planet → Destination
         ctx.accounts.destination.add_lamports(delivery_lamports)?;
@@ -969,10 +965,7 @@ pub mod oridion {
 
         // VALIDATION: Prevent a double-landing or underfunded source
         require!(delivery_lamports > 0, OridionError::AlreadyLanded);
-        require!(
-            from_planet.get_lamports() >= delivery_lamports,
-            OridionError::PlanetNotEnoughFundsError
-        );
+        require_planet_can_spend(from_planet, delivery_lamports)?;
 
         // TRANSFER funds from Planet → Destination
         ctx.accounts.destination.add_lamports(delivery_lamports)?;
@@ -1020,10 +1013,7 @@ pub mod oridion {
         );
 
         // --- SECURITY CHECK: Validate sufficient funds in the `from_planet` account ---
-        require!(
-                from.get_lamports() >= amount_lamports,
-                OridionError::InsufficientFunds
-            );
+        require_planet_can_spend(from, amount_lamports)?;
 
         // TRANSACTION: Move funds from planet to planet
         ctx.accounts.to_planet.add_lamports(amount_lamports)?;

@@ -42,7 +42,10 @@ pub struct DeletePlanet<'info> {
 
 #[derive(Accounts)]
 pub struct LockPlanet<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = planet.key() == pod.location @ OridionError::NotAuthorizedToHop
+    )]
     pub planet: Account<'info, Planet>,
     pub pod: Account<'info, Pod>,
     #[account(mut, address = MANAGER_PUBKEY)]

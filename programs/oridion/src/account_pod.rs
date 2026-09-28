@@ -55,13 +55,14 @@ pub struct CreatePod<'info> {
     ///        We verify its address via seeds and ensure it is program-owned when necessary.
     ///        Used only to receive lamports — no data validation required.
     #[account(mut,seeds = [b"treasury"],bump)]
-    pub treasury: AccountInfo<'info>,
+    pub treasury: UncheckedAccount<'info>,
     pub system_program: Program<'info,System>
 }
 
 
 #[repr(u8)]
 #[derive(Clone, AnchorSerialize, AnchorDeserialize)]
+#[borsh(use_discriminant = true)]
 pub enum ActivityAction {
     Launch = 0,
     Hop = 1,
